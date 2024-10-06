@@ -1,4 +1,4 @@
-FROM debian:12 as base 
+FROM arm64v8/debian:12 as base 
 
 RUN apt-get update && apt-get install -y --no-install-recommends  \
     g++ \
@@ -35,9 +35,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
-ENV PATH="/root/miniconda3/bin:${PATH}"
-ARG PATH="/root/miniconda3/bin:${PATH}"
-ENV LD_LIBRARY_PATH=/opt/kaldi/tools/openfst/lib:$LD_LIBRARY_PATH
+ENV PATH=/opt/kaldi/src/ivectorbin:/root/miniconda3/bin:${PATH}
+ARG PATH=/root/miniconda3/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/lib/opt/kaldi/tools/openfst/lib:$LD_LIBRARY_PATH
 ENV CPLUS_INCLUDE_PATH=/opt/kaldi/tools/openfst/include:$CPLUS_INCLUDE_PATH
 ENV LIBRARY_PATH=/opt/kaldi/tools/openfst/lib:$LIBRARY_PATH
 
@@ -49,6 +49,8 @@ RUN git clone --depth 1 --branch aarch64-compatible https://github.com/andrikaro
     ./configure --shared --mathlib=OPENBLAS && \
     make depend -j $(nproc) && \
     make -j $(nproc) && \ 
+    cd /opt/kaldi/src/ivectorbin && \
+    make -j $(nproc) && \
     ldconfig
 
 RUN wget \
@@ -95,7 +97,6 @@ RUN cd /opt/kaldi/tools && \
     extras/install_pocolm.sh
 
 ENV HOME /opt
-ENV LD_LIBRARY_PATH /usr/local/lib
 
 RUN ln -s -f /usr/bin/python3 /usr/bin/python
 
@@ -104,14 +105,14 @@ COPY est_punct2-aesara.tar.gz /opt/est-asr-pipeline/est_punct2-aesara.tar.gz
 
 RUN mkdir -p /opt/est-asr-pipeline && \
     cd /opt/est-asr-pipeline && \
-    cat est_punct2-aesara.tar.gz | tar xvz && \
+    tar xf est_punct2-aesara.tar.gz && \
     rm est_punct2-aesara.tar.gz
 
 COPY kaldi-offline-transcriber-data-2021-06-11.tgz /opt/est-asr-pipeline/kaldi-offline-transcriber-data-2021-06-11.tgz
 
 
 RUN cd /opt/est-asr-pipeline && \
-    cat kaldi-offline-transcriber-data-2021-06-11.tgz | tar xvz && \
+    tar xf kaldi-offline-transcriber-data-2021-06-11.tgz && \
     rm kaldi-offline-transcriber-data-2021-06-11.tgz
    
 COPY bin /opt/est-asr-pipeline/bin
@@ -120,6 +121,7 @@ ENV KALDI_ROOT /opt/kaldi
 
 FROM base AS stage_1_to_5
 
+# Separate stages to cache the intermediate steps
 COPY compile_models/stage_1.sh compile_models/stage_2.sh compile_models/stage_3.sh compile_models/stage_4.sh compile_models/stage_5.sh /opt/est-asr-pipeline/compile_models/
 
 RUN cd /opt/est-asr-pipeline && \
@@ -156,8 +158,18 @@ RUN echo '--sample-frequency=16000' >  /opt/est-asr-pipeline/kaldi-data/sid/mfcc
     echo '--num-ceps=24' >>  /opt/est-asr-pipeline/kaldi-data/sid/mfcc_sid.conf && \
     echo '--snip-edges=false' >>  /opt/est-asr-pipeline/kaldi-data/sid/mfcc_sid.conf
 
+SHELL ["/bin/bash", "-c"]
+RUN cd /opt/est-asr-pipeline/punctuator-data/est_punct2 && \
+    conda create -n aesara-env python=3.10.15 -y && \
+    conda init && \
+    source ~/.bashrc && \
+    conda activate aesara-env && \
+    conda install -c conda-forge aesara numpy pytorch -y && \
+    conda clean -a -y
+
 # run punctuation once on dummy data, just to get the model compiled and cached
 RUN cd /opt/est-asr-pipeline/punctuator-data/est_punct2 && \
+    conda activate aesara-env && \
     echo {} > tmp1 && \
     python3 punctuator_pad_emb_json.py Model_stage2p_final_563750_h256_lr0.02.pcl tmp1 tmp2 && \
     rm tmp1 tmp2 || echo "OK";
@@ -169,23 +181,5 @@ RUN cd /opt/est-asr-pipeline/bin && \
 # cache model for speech activity detection
 RUN cd /opt/est-asr-pipeline/bin && \
     ./find_speech_segments.py foo fii  || echo "OK";
-
-RUN cd /opt/kaldi/src/ivectorbin && \
-    make -j $(nproc) || echo "OK" && \
-    ldconfig
-
-SHELL ["/bin/bash", "-c"]
-RUN cd /opt/est-asr-pipeline/punctuator-data/est_punct2 && \
-    conda create -n aesara-env python=3.10.15 -y && \
-    conda init && \
-    source ~/.bashrc && \
-    conda activate aesara-env && \
-    conda install -c conda-forge aesara numpy pytorch -y && \
-    conda clean -a -y
-
-COPY extracted_punct/punctuator-data/est_punct2/*.py /opt/est-asr-pipeline/punctuator-data/est_punct2/
-
-ENV PATH="/opt/kaldi/src/ivectorbin:${PATH}"
-ENV LD_LIBRARY_PATH=/opt/kaldi/tools/openfst/lib:$LD_LIBRARY_PATH
 
 CMD ["/bin/bash"]    
