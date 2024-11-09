@@ -4,11 +4,12 @@ This project uses the Nextflow workflow engine to transcribe Estonian speech rec
 
 Nextflow offers great support for container technologies like Docker and different cluster and cloud environments as well as Kubernetes.
 
+*This pipeline requires a server with a fairly modern NViudia GPU!*
+
 ## Installation
 
-The project uses Nextflow which depends mainly on Java. Both should be installed locally. Nextflow 22.10.x or earlier has to be used, newer versions will not work at the moment!
-
-The pre-built model, scripts and Kaldi tookit is consumed via Docker and so Docker also needs to be installed.
+The project uses Nextflow which depends mainly on Java. Both should be installed locally.
+The pre-built models, scripts and Kaldi tookit is consumed via Docker and so Docker also needs to be installed.
 
 This configuration has only been used on Linux. Because of Docker use other OS-s could be possible but because of configuration tricks used in the nextflow.config files, Dockerizing this project might be easiest.
 
@@ -18,7 +19,11 @@ Install Nextflow locally (depends on Java 8, refer to official documentation in 
 
 Pull the required Docker image, containing models and libraries (recommended):
 
-    docker pull alumae/est-asr-pipeline:0.1.4
+
+    docker pull europe-north1-docker.pkg.dev/speech2text-218910/repo/est-asr-pipeline:1.0c
+
+Also, install [NVIDIA Container Runtime](https://developer.nvidia.com/nvidia-container-runtime)
+
 
 ## Usage
 
@@ -26,43 +31,63 @@ Pull the required Docker image, containing models and libraries (recommended):
 
 Run:
 
-    nextflow run transcribe.nf --in /path/to/some_audiofile.mp3
+    NXF_VER=22.10.0 nextflow run transcribe.nf -profile docker --in /path/to/some_audiofile.mp3 
+
+*Note: NXF_VER=22.10.0 sets the Nextflow version. Using the newest Nextflow versions will currently not work.*
 
 If you didn't pull the Docker image before, then the first invocation might take some time, because the required Docker image
 containing all the needed models and libraries is automatically pulled from the remote registry.
 
 A successful invocation will result with something like this:
 
+    $ nextflow run transcribe.nf -profile docker --in /path/to/some_audiofile.mp3
     N E X T F L O W  ~  version 21.10.6
-    Launching `transcribe.nf` [backstabbing_baekeland] - revision: 7ee707faa8
-    executor >  local (12)
-    [ae/4b81cd] process > to_wav                   [100%] 1 of 1 ✔
-    [27/370fbd] process > diarization              [100%] 1 of 1 ✔
-    [ec/c58cee] process > prepare_initial_data_dir [100%] 1 of 1 ✔
-    [c6/299141] process > language_id              [100%] 1 of 1 ✔
-    [d8/9fcbc7] process > mfcc                     [100%] 1 of 1 ✔
-    [85/a6589b] process > speaker_id               [100%] 1 of 1 ✔
-    [09/f7d366] process > one_pass_decoding        [100%] 1 of 1 ✔
-    [0e/fd2533] process > rnnlm_rescoring          [100%] 1 of 1 ✔
-    [c0/461429] process > lattice2ctm              [100%] 1 of 1 ✔
-    [b4/04eeee] process > to_json                  [100%] 1 of 1 ✔
-    [37/3d7f31] process > punctuation              [100%] 1 of 1 ✔
-    [86/90a123] process > output                   [100%] 1 of 1 ✔
-    [d3/23d672] process > empty_output             -
-    Completed at: 14-apr-2022 10:55:48
-    Duration    : 3m 31s
+    Launching `transcribe.nf` [festering_crick] - revision: ee9a3dc173
+    executor >  local (11)
+    [5a/bad7f2] process > to_wav                   [100%] 1 of 1 ✔
+    [c2/4733fb] process > diarization              [100%] 1 of 1 ✔
+    [08/d271ef] process > prepare_initial_data_dir [100%] 1 of 1 ✔
+    [23/9c6450] process > language_id              [100%] 1 of 1 ✔
+    [95/5dec5e] process > speaker_id               [100%] 1 of 1 ✔
+    [ad/15e65d] process > decode                   [100%] 1 of 1 ✔
+    [c9/f8d8f5] process > mfcc                     [100%] 1 of 1 ✔
+    [e6/668fbf] process > hyp2ctm                  [100%] 1 of 1 ✔
+    [e2/2b4452] process > to_json                  [100%] 1 of 1 ✔
+    [2a/32162e] process > punctuation              [100%] 1 of 1 ✔
+    [2d/698ef9] process > output                   [100%] 1 of 1 ✔
+    [-        ] process > empty_output             -
+    Completed at: 03-apr-2023 15:53:01
+    Duration    : 4m 44s
     CPU hours   : 0.1
-    Succeeded   : 12
+    Succeeded   : 11
+
+
 
 The transcription result in different formats is put to the directory `results/some_audiofile`
 (where `some_audiofile` corresponds to the "basename" of your input file):
 
     $ ls results/some_audiofile/
-    result.ctm  result.json  result.srt  result.trs  result.with-compounds.ctm
+    result.ctm  result.json  result.srt  result.trs  result.with-compounds.ctm   result.txt
 
 ### Running on cluster
 
-TODO
+#### SGE
+
+Run:
+
+    NXF_VER=22.10.0 nextflow run transcribe.nf -profile docker,sge --in /path/to/some_audiofile.mp3 
+
+*Note: NXF_VER=22.10.0 sets the Nextflow version. Using the newest Nextflow versions will currently not work.*
+
+#### SLURM
+
+Run:
+
+    NXF_VER=22.10.0 nextflow run transcribe.nf -profile docker,slurm --in /path/to/some_audiofile.mp3 
+
+*Note: NXF_VER=22.10.0 sets the Nextflow version. Using the newest Nextflow versions will currently not work.*
+
+In both cases, some things in nextflow.config might need to be modified.
 
 ### Running without Docker
 
@@ -78,13 +103,6 @@ Firstly, the main script (transcribe.nf) already has default values for input pa
 -   `--do_punctuation true|false` - Whether to attempt punctuation recovery and add punctuation to the transcribed text. By default `true`.
 -   `--do_language_id true|false` - Whether to apply a language ID model to discard speech segements that are not in Estonian. By default `true`.
 
-### Configuration file
-
-Additional configuration is currently provided via the nextflow.config file. The following parameters should be changed if you need advanced execution optimizations:
-
--   nthreads - By default the script will use 2 system threads for more CPU-intensive parts of the transcription pipeline. Should be changed in case you are executing the script in parallel multiple times or want to use a different nubmer of threads per execution.
-
-Nextflow offers great support for cluster and cloud environments and Kubernetes. Please consult Nextflow documentation in order to configure these.
 
 ### Command line options
 
